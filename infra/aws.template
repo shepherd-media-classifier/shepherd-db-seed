@@ -1,4 +1,4 @@
-Description: "Deploys the shepherd networks stack"
+Description: "Deploys the shepherd-db-seeder stack"
 
 Resources:
 
@@ -11,7 +11,7 @@ Resources:
       InstanceTenancy: default
       Tags:
         - Key: Name
-          Value: vpc-shepherd
+          Value: vpc-shepherd-db-seeder
   Subnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -21,7 +21,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: shepherd-subnet1
+          Value: shepherd-db-seeder-subnet1
   Subnet2:
     Type: AWS::EC2::Subnet
     Properties:
@@ -31,7 +31,7 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: shepherd-subnet2
+          Value: shepherd-db-seeder-subnet2
   Subnet3:
     Type: AWS::EC2::Subnet
     Properties:
@@ -41,25 +41,25 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: shepherd-subnet3
+          Value: shepherd-db-seeder-subnet3
 # DB subnet group to be passed to rds          
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: shepherd-dbsubnetgroup
+      DBSubnetGroupDescription: shepherd-db-seeder-dbsubnetgroup
       SubnetIds:
         - !Ref Subnet1
         - !Ref Subnet2
         - !Ref Subnet3
-      DBSubnetGroupName: shepherd-dbsubnetgroup
+      DBSubnetGroupName: shepherd-db-seeder-dbsubnetgroup
   
 # security group to be passed to docker and rds
   ShepherdSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: "Shepherd default SG"
+      GroupDescription: "Shepherd-db-seeder default SG"
       VpcId: !Ref ShepherdVPC
-      GroupName: shepherd-default-sg
+      GroupName: shepherd-db-seeder-default-sg
   DefaultSecurityGroupIngress5432:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -83,7 +83,7 @@ Resources:
     Properties:
       Tags:
         - Key: Name
-          Value: shepherd-internet-gw
+          Value: shepherd-db-seeder-internet-gw
   VPCGatewayAttachment:
     Type: 'AWS::EC2::VPCGatewayAttachment'
     Properties:
@@ -95,7 +95,7 @@ Resources:
       VpcId: !Ref ShepherdVPC
       Tags:
         - Key: Name
-          Value: shepherd-route-table
+          Value: shepherd-db-seeder-route-table
   RouteTableAssociation1:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
@@ -119,21 +119,6 @@ Resources:
       RouteTableId: !Ref RouteTable
       DestinationCidrBlock: '0.0.0.0/0'
 
-  # # Needed to connect to EIP
-  # LoadBalancer:
-  #   Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-  #   Properties:
-  #     Type: application
-  #     Scheme: internet-facing
-  #     SecurityGroups:
-  #     - !Ref ShepherdSecurityGroup
-  #     Subnets:
-  #     - !Ref Subnet1
-  #     - !Ref Subnet2
-  #     - !Ref Subnet3
-  #     Tags:
-  #     - Key: net.arweave.hosted.projects
-  #       Value: shepherd
 
   ShepherdPgdb:
     Type: AWS::RDS::DBInstance
@@ -142,7 +127,7 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      DBInstanceIdentifier: shepherd-pgdb
+      DBInstanceIdentifier: shepherd-db-seeder-pgdb
       VPCSecurityGroups:
         - Ref: ShepherdSecurityGroup
       DBSubnetGroupName: 
@@ -158,85 +143,8 @@ Resources:
       MasterUserPassword: postgres
       Tags:
         - Key: Project
-          Value: "shepherd RDS PostgreSQL"
+          Value: "shepherd-db-seeder RDS PostgreSQL"
   
-  # shepherd-feeder-q
-  SQSFeederQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: shepherd-feeder-q
-      MessageRetentionPeriod: 1209600 # 14 days (AWS max value)
-      VisibilityTimeout: 900 # 15 minutes
-      # RedrivePolicy:
-      #   deadLetterTargetArn: !GetAtt SQSInputQueueDLQ.Arn
-      #   maxReceiveCount: 10
-
-  # AWS_INPUT_BUCKET
-  # Policies for S3Bucket access done in docker compose also
-  S3Bucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      AccessControl: BucketOwnerFullControl
-      BucketName: !Join ['', ['shepherd-mod-input-', Ref: AWS::Region]]
-      NotificationConfiguration:
-        QueueConfigurations:
-          - Queue: !GetAtt SQSInputQueue.Arn 
-            Event: 's3:ObjectCreated:*'
-  SQSInputQueueDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      MessageRetentionPeriod: 1209600 # 14 days (AWS max value)
-      QueueName: shepherd-input-dlq
-  SQSInputQueueDLQPolicy:
-    Type: AWS::SQS::QueuePolicy
-    Properties:
-      Queues:
-        - !Ref SQSInputQueueDLQ
-      PolicyDocument:
-        Statement:
-          - Effect: Allow
-            Principal:
-              AWS:
-                - Ref: AWS::AccountId
-            Action: 'sqs:*'
-            Resource: !GetAtt SQSInputQueueDLQ.Arn
-  # AWS_SQS_INPUT_QUEUE
-  SQSInputQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: shepherd-input-q
-      MessageRetentionPeriod: 1209600 # 14 days (AWS max value)
-      VisibilityTimeout: 900 # 15 minutes
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt SQSInputQueueDLQ.Arn
-        maxReceiveCount: 10
-  SQSInputQueuePolicy:
-    Type: AWS::SQS::QueuePolicy
-    Properties:
-      PolicyDocument:
-        Statement:
-          - Effect: Allow
-            Principal: '*'
-            Action: 
-              - 'SQS:SendMessage'
-            Resource: !GetAtt SQSInputQueue.Arn
-            Condition:
-              ArnEquals:
-                'aws:SourceArn': !Join 
-                  - ''
-                  - - 'arn:aws:s3:::'
-                    - shepherd-mod-input
-                    - '-'
-                    - Ref: AWS::Region
-          - Effect: Allow
-            Principal: 
-              AWS:
-                - Ref: AWS::AccountId
-            Action: 
-              - 'SQS:*'
-            Resource: !GetAtt SQSInputQueue.Arn
-      Queues:
-        - !Ref SQSInputQueue 
 
 Outputs:
 
@@ -255,15 +163,6 @@ Outputs:
     Description: "DB_HOST Endpoint of the newly created RDS PostgreSQL"
     Value: !GetAtt ShepherdPgdb.Endpoint.Address
 
-  SQSFeederQueue:
-    Value: !GetAtt SQSFeederQueue.QueueUrl
-
-  S3Bucket:
-    Description: "shepherd-safer S3Bucket for Safer inputs"
-    Value: !Ref S3Bucket
-
-  SQSInputQueue:
-    Value: !Ref SQSInputQueue
 
   Subnet1:
     Value: !Ref Subnet1

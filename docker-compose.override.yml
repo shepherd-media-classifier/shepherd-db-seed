@@ -1,7 +1,7 @@
 version: '3.7'
 
 services:
-  pgdb:
+  pgdb-seeder:
     build: 
       context: ./infra-local/postgres
     volumes: 
@@ -16,7 +16,7 @@ services:
     #   - '5432:5432'
   scanner:
     depends_on: 
-      - pgdb
+      - pgdb-seeder
 
 volumes:
   pgdata:

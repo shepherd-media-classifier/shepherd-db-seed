@@ -7,7 +7,7 @@ services:
       context: ./services
       target: scanner
     environment: 
-      DB_HOST: ${DB_HOST:-pgdb}
+      DB_HOST: ${DB_HOST:-pgdb-seeder}
       PROCESS_NAME: scanner
       SLACK_WEBHOOK: ${SLACK_WEBHOOK}
       HOST_URL: ${HOST_URL:-https://arweave.net}
@@ -18,7 +18,7 @@ services:
       context: ./services
       target: webserver
     environment: 
-      DB_HOST: ${DB_HOST:-pgdb}
+      DB_HOST: ${DB_HOST:-pgdb-seeder}
       PROCESS_NAME: webserver
       SLACK_WEBHOOK: ${SLACK_WEBHOOK:-}
       SLACK_POSITIVE: ${SLACK_POSITIVE:-}
