@@ -29,7 +29,7 @@ export const scanBlocks = async (minBlock: number, maxBlock: number, gqlUrl: str
 			logger(gqlUrl, 'GATEWAY ERROR!', e.message, 'Waiting for 30 seconds...')
 			throw e
 		}else{
-			logger(gqlUrl, 'Error!', e.code, ':', e.message)
+			logger(gqlUrl, 'Error!', e.name, ':', e.message)
 			logger(e)
 			logger("Error in scanBlocks. See above.")
 			throw e 
@@ -188,7 +188,7 @@ const getRecords = async (minBlock: number, maxBlock: number, gqlUrl: string) =>
 			/* filter dupes from edges. batch insert does not like dupes */
 			edges = [...new Map(edges.map(edge => [edge.node.id, edge])).values()]
 
-			numRecords += await insertRecords(edges)
+			numRecords += await insertRecords(edges, gqlUrl)
 		}
 		hasNextPage = res.pageInfo.hasNextPage
 
@@ -200,14 +200,17 @@ const getRecords = async (minBlock: number, maxBlock: number, gqlUrl: string) =>
 }
 
 const getParent = memoize(
-	async(p: string)=> {
-		const res = await Gql.tx(p)
+	async(p: string, gqlUrl: string)=> {
+		const res = await Gql.tx(p, gqlUrl)
+		console.log({p, res})
 		return res.parent?.id || null
 	},
 	{ maxSize: 10000},
 )
 
-const insertRecords = async(metas: GQLEdgeInterface[])=> {
+const insertRecords = async(metas: GQLEdgeInterface[], gqlUrl: string)=> {
+
+	// metas.map(meta => console.log(meta.node))
 
 	let records: TxScanned[] = []
 
@@ -239,7 +242,7 @@ const insertRecords = async(metas: GQLEdgeInterface[])=> {
 		if(parent){
 			let p: string | null = parent
 			do{
-				p = await getParent(p)
+				p = await getParent(p, gqlUrl)
 			}while(p && parents.push(p))
 		}
 
