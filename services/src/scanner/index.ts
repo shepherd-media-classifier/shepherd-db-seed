@@ -25,7 +25,8 @@ const start = async()=> {
 		const seed = await db.seed.run({ directory: `${__dirname}/../../seeds/`})
 		logger('info', 'applied the following seed files', seed)
 		
-		scanner()
+		scanner('https://arweave.net/graphql')
+		scanner('https://arweave-search.goldsky.com/graphql')
 		
 	}catch(e){
 		logger('Error!', 'error upgrading database', e)

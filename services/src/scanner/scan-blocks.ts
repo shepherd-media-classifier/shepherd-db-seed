@@ -1,35 +1,35 @@
-import * as Gql from 'arca-gql'
-import { GQLEdgeInterface } from 'arca-gql/dist/faces'
-import { GQL_URL, imageTypes, videoTypes } from '../common/constants'
+import * as Gql from 'ar-gql'
+import { GQLEdgeInterface } from 'ar-gql/dist/faces'
 import { TxScanned } from '../common/shepherd-plugin-interfaces/types'
 import getDbConnection from '../common/utils/db-connection'
 import { logger } from '../common/shepherd-plugin-interfaces/logger'
 import { performance } from 'perf_hooks'
 import { slackLogger } from '../common/utils/slackLogger'
+import memoize from 'micro-memoize'
 
 
 const knex = getDbConnection()
 
-Gql.setEndpointUrl(GQL_URL)
 
 
-export const scanBlocks = async (minBlock: number, maxBlock: number) => {
+export const scanBlocks = async (minBlock: number, maxBlock: number, gqlUrl: string) => {
+
 	try{
 
 		/* get images and videos */
 
-		logger('info', `making 1 scans of ${((maxBlock - minBlock) + 1)} blocks, from block ${minBlock} to ${maxBlock}`)
-		return await getRecords(minBlock, maxBlock)
+		logger(gqlUrl, `making 1 scans of ${((maxBlock - minBlock) + 1)} blocks, from block ${minBlock} to ${maxBlock}`)
+		return await getRecords(minBlock, maxBlock, gqlUrl)
 
 	}catch(e:any){
 
 		let status = Number(e.response?.status) || 0
 
 		if( status >= 500 ){
-			logger('GATEWAY ERROR!', e.message, 'Waiting for 30 seconds...')
+			logger(gqlUrl, 'GATEWAY ERROR!', e.message, 'Waiting for 30 seconds...')
 			throw e
 		}else{
-			logger('Error!', e.code, ':', e.message)
+			logger(gqlUrl, 'Error!', e.code, ':', e.message)
 			logger(e)
 			logger("Error in scanBlocks. See above.")
 			throw e 
@@ -139,16 +139,12 @@ const queryArio = `query($cursor: String, $minBlock: Int, $maxBlock: Int) {
 	}
 }`
 
-let query = queryArio
-if(GQL_URL.includes('goldsky')){
-	query = queryGoldskyWild
-}
 
 
 /* Generic getRecords */
 
-const getRecords = async (minBlock: number, maxBlock: number) => {
-
+const getRecords = async (minBlock: number, maxBlock: number, gqlUrl: string) => {
+	const query = (gqlUrl.includes('goldsky')) ? queryGoldskyWild : queryArio
 	let hasNextPage = true
 	let cursor = ''
 	let numRecords = 0 
@@ -158,26 +154,30 @@ const getRecords = async (minBlock: number, maxBlock: number) => {
 		let res; 
 		while(true){
 			try{
-				res = (await Gql.run(query, { 
-					minBlock,
-					maxBlock,
-					cursor,
-				})).data.transactions
+				res = (await Gql.run(
+					query, 
+					{ 
+						minBlock,
+						maxBlock,
+						cursor,
+					},
+					gqlUrl,
+				)).data.transactions
 				break;
 			}catch(e:any){
 				if(e instanceof TypeError){
-					logger('gql-error', 'data: null. errors in res.data.errors')
+					logger(gqlUrl, 'gql-error', 'data: null. errors in res.data.errors')
 					continue;
 				}
 				if(e.code && e.code === 'ECONNRESET'){
-					logger('gql-error', 'ECONNRESET')
+					logger(gqlUrl, 'gql-error', 'ECONNRESET')
 					continue;
 				}
 				// if(e.response?.status === 504){
 				// 	logger('gql-error', e.response?.status, ':', e.message)
 				// 	continue;
 				// }
-				logger('gql-error', e.response?.status, ':', e.message)
+				logger(gqlUrl, 'gql-error', e.response?.status, ':', e.message)
 				throw e;
 			}
 		}
@@ -199,7 +199,16 @@ const getRecords = async (minBlock: number, maxBlock: number) => {
 	return numRecords
 }
 
+const getParent = memoize(
+	async(p: string)=> {
+		const res = await Gql.tx(p)
+		return res.parent?.id || null
+	},
+	{ maxSize: 10000},
+)
+
 const insertRecords = async(metas: GQLEdgeInterface[])=> {
+
 	let records: TxScanned[] = []
 
 	for (const item of metas) {
@@ -207,10 +216,14 @@ const insertRecords = async(metas: GQLEdgeInterface[])=> {
 		let content_type = item.node.data.type
 		const content_size = item.node.data.size.toString()
 		const height = item.node.block.height
-		const parent = item.node.parent?.id || null
+		const parent = item.node.parent?.id || null // the direct parent, if exists
+		const parents: string[] = []
 
-		//sanity
-		if(!height) slackLogger(`HeightError : no height for '${txid}'`)
+		// sanity
+		if(!height){
+			logger(`HeightError` , `no height for '${txid}'`)
+			slackLogger(`HeightError : no height for '${txid}'`)
+		}
 
 		// this content_type is missing for dataItems
 		if(!content_type){ 
@@ -222,22 +235,30 @@ const insertRecords = async(metas: GQLEdgeInterface[])=> {
 			}
 		}
 
+		// loop to find all nested parents
+		if(parent){
+			let p: string | null = parent
+			do{
+				p = await getParent(p)
+			}while(p && parents.push(p))
+		}
+
 		records.push({
 			txid, 
 			content_type,
 			content_size,
 			height,
 			parent,
+			...(parents.length > 0 && {parents}), //leave `parents` null if not nested
 		})
 	}
 
 	try{
-		await knex<TxScanned>('txs').insert(records).onConflict('txid').merge(['height', 'parent'])
+		await knex<TxScanned>('txs').insert(records).onConflict('txid').merge(['height', 'parent', 'parents'])
 	}	catch(e:any){
-		if(e.code && Number(e.code) === 23505){
-			logger('info', 'Duplicate key value violates unique constraint', e.detail)
-		} else if(e.code && Number(e.code) === 23502){
+		if(e.code && Number(e.code) === 23502){
 			logger('Error!', 'Null value in column violates not-null constraint', e.detail)
+			slackLogger('Error!', 'Null value in column violates not-null constraint', e.detail)
 			throw e
 		} else { 
 			if(e.code) logger('Error!', e.code)

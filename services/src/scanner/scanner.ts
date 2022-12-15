@@ -15,18 +15,18 @@ const TRAIL_BEHIND = 15
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
-const waitForNewBlock =  async (height: number) => {
+const waitForNewBlock =  async (height: number, gqlUrl: string) => {
 	while(true){
-		let h = await getGqlHeight()
+		let h = await getGqlHeight(gqlUrl)
 		if(h >= height){
 			return h; //stop waiting
 		}
-		logger('info', 'weave height', h, 'synced to height', (h - TRAIL_BEHIND))
+		logger(gqlUrl, 'weave height', h, 'synced to height', (h - TRAIL_BEHIND))
 		await sleep(30000)
 	}
 }
 
-export const scanner = async()=> {
+export const scanner = async(gqlUrl: string)=> {
 	try {
 		/**
 		 * numOfBlocks - to scan at once
@@ -37,12 +37,13 @@ export const scanner = async()=> {
 		 * keep pace once at the top: 1
 		 */
 		const db = dbConnection()
-		const readPosition = async()=> (await db<StateRecord>('states').where({pname: 'scanner_position'}))[0].value
+		let pname: ('gold_position' | 'ario_position') = (gqlUrl.includes('goldsky')) ? 'gold_position' : 'ario_position'
+		const readPosition = async()=> (await db<StateRecord>('states').where({ pname }))[0].value
 		let position = await readPosition()
-		let topBlock = await getGqlHeight()
+		let topBlock = await getGqlHeight(gqlUrl)
 		const initialHeight = topBlock // we do not want to keep calling getTopBlock during initial catch up phase
 
-		logger('initialising', 'Starting scanner position', position, 'and weave height', topBlock)
+		logger(gqlUrl, 'Starting scanner position', position, 'and weave height', topBlock)
 
 		const calcBulkBlocks = (position: number) => {
 			if(position < 150000) return 1000
@@ -65,21 +66,19 @@ export const scanner = async()=> {
 				} else if(max + TRAIL_BEHIND >= topBlock){ // wait until we have enough blocks ahead
 					numOfBlocks = 1
 					max = min
-					topBlock = await waitForNewBlock(max + TRAIL_BEHIND)
+					topBlock = await waitForNewBlock(max + TRAIL_BEHIND, gqlUrl)
 				}
 
-				const numMediaFiles = await scanBlocks(min, max)
-				logger('results', 
-					'media files:', numMediaFiles, ',',
-					'scanner_position:', max, ',',
-					'topBlock:', topBlock, 
+				const numMediaFiles = await scanBlocks(min, max, gqlUrl)
+				logger(gqlUrl, 'results.', 
+					`media files: ${numMediaFiles}, ${pname}: ${max}, topBlock: ${topBlock}`
 				)
 
 				// there might be more than 1 scanner running (replacing)
 				const dbPosition = await readPosition()
 				if(dbPosition < max){
 					await db<StateRecord>('states')
-						.where({pname: 'scanner_position'})
+						.where({ pname })
 						.update({value: max})
 				}else{
 					max = dbPosition
@@ -91,19 +90,19 @@ export const scanner = async()=> {
 				const tProcess = performance.now() - t0
 				// let timeout = 2000 - tProcess
 				// if(timeout < 0) timeout = 0
-				console.log(`scanned ${numOfBlocks} blocks in ${tProcess} ms.`)// pausing for ${timeout}ms`)
+				console.log(gqlUrl, `scanned ${numOfBlocks} blocks in ${tProcess} ms.`)// pausing for ${timeout}ms`)
 				// await sleep(timeout) //slow down, we're getting rate-limited 
 
 			} catch(e:any) {
-				logger('Error!', 'Scanner fell over. Waiting 30 seconds to try again.')
+				logger(gqlUrl, 'Error!', 'Scanner fell over. Waiting 30 seconds to try again.')
 				logger(await si.mem())
 				await sleep(30000)
 			}
 		}///end while(true)
 	} catch(e:any) {
-		logger('UNHANDLED Error in scanner!', e.name, ':', e.message)
+		logger(gqlUrl, 'UNHANDLED Error in scanner!', e.name, ':', e.message)
 		logger(await si.mem())
-		slackLogger('UNHANDLED Error in scanner!', e.name, ':', e.message)
+		slackLogger(gqlUrl, 'UNHANDLED Error in scanner!', e.name, ':', e.message)
 	}
 }
 
