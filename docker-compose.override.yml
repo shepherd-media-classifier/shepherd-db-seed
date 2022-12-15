@@ -5,7 +5,7 @@ services:
     build: 
       context: ./infra-local/postgres
     volumes: 
-      - pgdata:/var/lib/postgresql/data
+      - pgdata-seeder:/var/lib/postgresql/data
     environment: 
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -19,5 +19,5 @@ services:
       - pgdb-seeder
 
 volumes:
-  pgdata:
+  pgdata-seeder:
   # minio:
