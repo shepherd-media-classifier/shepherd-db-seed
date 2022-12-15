@@ -42,7 +42,7 @@
   "dependencies": {
     "@slack/webhook": "^6.0.0",
     "@types/express": "^4.17.11",
-    "@types/node": "^16.11.9",
+    "@types/node": "^18.11.15",
     "@types/rimraf": "^3.0.1",
     "ansi-colors": "^4.1.1",
     "ar-gql": "^0.0.11",
