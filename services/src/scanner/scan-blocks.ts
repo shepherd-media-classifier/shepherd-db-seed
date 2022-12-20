@@ -193,7 +193,7 @@ const getRecords = async (minBlock: number, maxBlock: number, gqlUrl: string) =>
 		hasNextPage = res.pageInfo.hasNextPage
 
 		const tProcess = performance.now() - t0
-		logger('info', `processed gql page of ${edges.length} results in ${tProcess.toFixed(0)} ms. cursor: ${cursor}. Total ${numRecords} records.`)
+		logger('info', `processed gql page of ${edges.length} results in ${tProcess.toFixed(0)} ms. cursor: ${cursor}. Total ${numRecords} records. `, gqlUrl.includes('arweave.net') ? 'ario':'gold')
 	}
 
 	return numRecords
@@ -202,10 +202,14 @@ const getRecords = async (minBlock: number, maxBlock: number, gqlUrl: string) =>
 const getParent = memoize(
 	async(p: string, gqlUrl: string)=> {
 		const res = await Gql.tx(p, gqlUrl)
-		console.log({p, res})
 		return res.parent?.id || null
 	},
-	{ maxSize: 10000},
+	{ 
+		isPromise: true,
+		maxSize: 10000, //allows for caching of maxSize number of bundles per query (1 block).
+		// onCacheHit: ()=>console.log(`getParent cache hit`),
+		// onCacheAdd: async(cache, options)=> console.log(`getParent cache miss`, /* cache.keys,*/ JSON.stringify(cache.values)),
+	},
 )
 
 const insertRecords = async(metas: GQLEdgeInterface[], gqlUrl: string)=> {
@@ -242,7 +246,14 @@ const insertRecords = async(metas: GQLEdgeInterface[], gqlUrl: string)=> {
 		if(parent){
 			let p: string | null = parent
 			do{
+				const t0 = performance.now()
+				const p0 = p
 				p = await getParent(p, gqlUrl)
+
+				const t1 = performance.now() - t0
+				if(t1 > 10){
+					logger(txid, `got parent ${p0} details. `, gqlUrl.includes('arweave.net') ? 'ario':'gold')
+				}
 			}while(p && parents.push(p))
 		}
 
